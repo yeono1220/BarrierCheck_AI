@@ -1,4 +1,4 @@
-BarrierCheck AI Ready v8 — stable overall and follow-up reports
+BarrierCheck AI Ready v9 — transport retries, stable overall and follow-up reports
 1. Close the old START_WINDOWS.bat window.
 2. Extract this ZIP to a new folder. Do not copy old files into it.
 3. Double-click START_WINDOWS.bat. Enter the authorized API key that worked earlier.
@@ -24,3 +24,12 @@ v8 stability patch (2026-11-26)
 - Overall is consistent across the dashboard, batch queue, single/batch PDF, and CSV. CSV includes overall source and report availability.
 - Local config now targets the supplied final workflow agt_hRY3sF6jaNwq8d7VTNEAHP, saved version 1. The previous project ID is retained because the export does not contain a project ID. Confirm workflow_id/config_id/project_id against the FINAL Studio Code screen before running. For a deployed copy, retain the deployment's verified configuration, or set UPSTAGE_WORKFLOW_ID / UPSTAGE_CONFIG_ID / UPSTAGE_PROJECT_ID in the server environment. Never commit API keys. This ZIP is the local v7-based package, not a replacement for hosting-specific configuration.
 - Verification: python -m unittest test_bridge; node test_frontend.js (optional Node.js). Synthetic fixtures, not a live Studio test. Diagnostics may contain case evidence; do not publish them. API credentials are not included.
+
+
+v9 transport stability patch
+- HTTP 525 and other selected transient gateway/server failures: file upload retries up to 3 times after the initial request (1, 2, 4 seconds between attempts). A lost upload response may leave an unused duplicate file upstream; no workflow job is submitted until a valid file ID is received.
+- File status and existing job GET requests: up to 2 retries, within the original per-request time budget. Existing v8 output recovery is retained.
+- Job creation POST is never automatically retried. If its outcome is uncertain, check Studio monitoring before any manual retry. Failed polling includes the existing Job ID; use `python server.py --recover-job job_...` to retrieve it once completed, then import the saved JSON. The existing batch pause-on-error behavior is retained intentionally.
+- 401/403/429 and other non-transient errors are not automatically retried. TLS certificate checks remain enabled. Persistent upstream outages still produce an error; this patch does not fix the provider server.
+- Local v8 UI, configuration, workflow decisions, and report validation are unchanged. For GitHub-hosted deployment, apply the transport patch to the existing hosting backend without replacing its hosting-specific settings. This ZIP remains a local Python package.
+- Tests: `python -m unittest test_bridge test_retry` (53 tests); `node test_frontend.js` (15 cases). Simulated HTTP and transport errors only; no live Upstage API calls were made.

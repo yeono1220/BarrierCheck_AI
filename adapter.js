@@ -66,10 +66,10 @@ function resultFromJob(job,cfg){
 
 async function api(path,{method='GET',body=null,ctype=null,signal}={}){
   const proxy=mode==='proxy';const headers=proxy?{'Accept':'application/json'}:{'Authorization':'Bearer '+KEY,'Accept':'application/json','x-project-id':CFG.project_id};if(ctype)headers['Content-Type']=ctype;
-  // Retry only gateway/TLS failures (502-504, 520-527): the request did not reach Upstage, so a retry is safe.
+  // Retry gateway/TLS failures (502-504, 520-527) for upload and GET only; job creation is never retried (avoids duplicate jobs), same policy as server.py v9.
   let res;for(let attempt=0;;attempt++){
-    try{res=await fetch((proxy?CFG.proxy_url.replace(/\/+$/,''):API)+path,{method,headers,body,signal});}catch(e){if(signal?.aborted)throw e;if(attempt<3){await sleep(1500*(attempt+1));continue;}throw Error('Upstage connection error.');}
-    if(([502,503,504].includes(res.status)||(res.status>=520&&res.status<=527))&&attempt<3){await sleep(1500*(attempt+1));continue;}
+    try{res=await fetch((proxy?CFG.proxy_url.replace(/\/+$/,''):API)+path,{method,headers,body,signal});}catch(e){if(signal?.aborted)throw e;if(!(method==='POST'&&path==='/responses')&&attempt<3){await sleep(1500*(attempt+1));continue;}throw Error('Upstage connection error.');}
+    if(!(method==='POST'&&path==='/responses')&&([502,503,504].includes(res.status)||(res.status>=520&&res.status<=527))&&attempt<3){await sleep(1500*(attempt+1));continue;}
     break;}
   if(!res.ok){const stage=path.startsWith('/files')?'File upload':path==='/responses'?'Job creation':'Job polling';const msg={525:'Temporary gateway TLS error, retried 3 times',502:'Temporary gateway error',504:'Gateway timeout',401:'API key rejected',403:'Key not authorized for this workflow/project',404:'Resource not found',429:'API quota or rate limit reached'}[res.status]||'Upstage API request failed';throw Error(`${stage}: ${msg} (HTTP ${res.status}).`);}
   return res.json();}
