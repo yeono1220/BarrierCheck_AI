@@ -63,3 +63,12 @@ python server.py
 - 실제 현장 서류로 검증하지 않았습니다(공개 서식 기반 실현 가능성 단계).
 - 경계값 근접 시 재시험 권고, 법정 기준과 사내 기준 자동 비교는 다음 단계 과제입니다.
 - 범위: 스프링식 일반형, 기체·증기용 PSV의 정비·벤치 시험 뒤 재설치 전 서류 검토. 파일럿식·파열판·보일러 증기용은 범위 밖입니다.
+
+## GitHub Pages (보기 전용 데모)
+
+`gh-pages` 브랜치는 서버 없이 프론트엔드만 띄웁니다. API 호출이 없으므로 `Run verification`은 잠기고(미리보기 모드), 다음 두 가지로 화면을 볼 수 있습니다.
+
+1. 첫 화면 아래 **Explore example results** 카드(예시 데이터)
+2. **Import result JSON** → `samples/` 폴더의 실제 Studio 실행 결과(set01 FAIL, set02 검토 필요, set03 PASS)를 내려받아 불러오기 → 결과 화면 → Next action → `View full draft →`로 후속 조치 보고서 미리보기·PDF 저장
+
+`samples/` 결과는 공개 서식에 가상 값을 채운 데이터셋으로 실행한 출력이며, reason 안의 【†N】은 Studio 인용 표시입니다.
