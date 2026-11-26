@@ -1,0 +1,7 @@
+diagnostics/
+_v6_backup/
+__pycache__/
+*.pyc
+*.zip
+*.pdf
+.env

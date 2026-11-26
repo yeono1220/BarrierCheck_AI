@@ -1,0 +1,19 @@
+BarrierCheck AI Ready v6 — result sheet exports
+1. Close the old START_WINDOWS.bat window.
+2. Extract this ZIP to a new folder. Do not copy old files into it.
+3. Double-click START_WINDOWS.bat. Enter the authorized API key that worked earlier.
+4. Press Ctrl+F5 in the browser if necessary.
+5. Run one PDF first, then add multiple PDFs. Rule rows show Satisfied / Violated / Unverified / N/A; final decisions remain PASS / FAIL / REVIEW. Rule counts describe the returned 05 intermediate snapshot, not a new decision.
+If any rule is missing, the server saves a local diagnostics/job_..._rules.json file with candidate rule output. Review the contents before sharing (may include document evidence). No API key is stored. Do not rerun the whole batch to diagnose missing rule statuses.
+Target: 고고고, Config 4. Workflow and API credentials unchanged. The 05 node is intermediate, 07/08 are final. Citation markers are ignored only when reading explicit fixed 05 status tokens. No missing status is inferred. Each PDF uses one job; read-only retrieval fallback never resubmits a case. Export results before closing or refreshing.
+Local tests and historical Studio output replay only; current live API responses not available for testing.
+
+v6 result exports (no API requests):
+- Individual result: Download result sheet saves a one-page, color-coded PDF of final decisions and all 15 reported rule states.
+- Batch queue: Download comparison PDF saves the current queue, including unfinished cases; Export comparison CSV opens in Excel. PDF matrix uses S/V/U/N/A/— with legend. CSV retains full names and rule labels.
+- PDF is a high-resolution image-based sheet, not a searchable text report. No missing status or final decision is inferred. Original JSON export remains available.
+
+v6 + follow-up report (no API requests, v6 screens unchanged):
+- Result page > Next action: "View full draft →" opens a paper-style preview of the 08 follow-up document (Print / Download PDF inside).
+- "Download draft ↓" now saves <source file>_followup_report.pdf instead of a .txt.
+- Values are shown exactly as returned by 07/08. Press Ctrl+F5 once after replacing the files.

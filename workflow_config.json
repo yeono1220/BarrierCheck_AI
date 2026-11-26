@@ -1,0 +1,9 @@
+{
+  "workflow_id": "agt_cpvfJpJUpuYZ2gp3eBsu2R",
+  "config_id": "4",
+  "label": "고고고",
+  "result_node": "07_최종판정_JSON",
+  "report_node": "08_요약보고서",
+  "output_contract": "compact",
+  "project_id": "proj_YqEvTJxpcNamP9CrEXEFcU"
+}
