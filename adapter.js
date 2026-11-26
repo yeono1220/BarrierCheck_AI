@@ -87,10 +87,10 @@ window.BarrierCheckAdapter={isConnected:false,
     if(!res.ok||!body)throw new Error(body?.error||`Backend response error (${res.status})`);return body.result;}};
 
 function connectUI(){
-  const host=document.querySelector('.sidebottom');if(!host||document.getElementById('byokBox'))return;
+  const hint=document.getElementById('integrationHint');if(!hint||document.getElementById('byokBox'))return;
   const box=document.createElement('div');box.id='byokBox';box.className='byok';
-  box.innerHTML='<div class="byok-title">Live API (browser)</div><input id="byokKey" type="password" autocomplete="off" placeholder="Upstage API key"><button id="byokBtn" class="btn primary small" type="button">Connect</button><div id="byokNote" class="byok-note">Key stays in this tab only; sent only to api.upstage.ai.</div>';
-  host.prepend(box);
+  box.innerHTML='<div class="byok-title">Live API · browser mode</div><div class="byok-row"><input id="byokKey" type="password" autocomplete="off" placeholder="Upstage API key (authorized for this workflow)"><button id="byokBtn" class="btn secondary small" type="button">Connect</button></div><div id="byokNote" class="byok-note">Key stays in this tab only; sent only to api.upstage.ai.</div>';
+  hint.after(box);
   const btn=box.querySelector('#byokBtn'),inp=box.querySelector('#byokKey'),note=box.querySelector('#byokNote');
   btn.addEventListener('click',async()=>{
     if(mode==='browser'){KEY=null;mode='preview';window.BarrierCheckAdapter.isConnected=false;inp.value='';inp.disabled=false;btn.textContent='Connect';note.textContent='Disconnected. Key cleared from memory.';configure();return;}
