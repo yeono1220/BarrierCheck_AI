@@ -65,8 +65,8 @@ function resultFromJob(job,cfg){
   return {decision_output:decision,followup_output:report,followup_error:warning,rule_snapshot:ruleSnapshot(job)};}
 
 async function api(path,{method='GET',body=null,ctype=null,signal}={}){
-  const headers={'Authorization':'Bearer '+KEY,'Accept':'application/json','x-project-id':CFG.project_id};if(ctype)headers['Content-Type']=ctype;
-  let res;try{res=await fetch(API+path,{method,headers,body,signal});}catch(e){if(signal?.aborted)throw e;throw Error('Upstage connection error.');}
+  const proxy=mode==='proxy';const headers=proxy?{'Accept':'application/json'}:{'Authorization':'Bearer '+KEY,'Accept':'application/json','x-project-id':CFG.project_id};if(ctype)headers['Content-Type']=ctype;
+  let res;try{res=await fetch((proxy?CFG.proxy_url.replace(/\/+$/,''):API)+path,{method,headers,body,signal});}catch(e){if(signal?.aborted)throw e;throw Error('Upstage connection error.');}
   if(!res.ok){const stage=path.startsWith('/files')?'File upload':path==='/responses'?'Job creation':'Job polling';const msg={401:'API key rejected',403:'Key not authorized for this workflow/project',404:'Resource not found',429:'API quota or rate limit reached'}[res.status]||'Upstage API request failed';throw Error(`${stage}: ${msg} (HTTP ${res.status}).`);}
   return res.json();}
 async function runBrowser(pdf,{signal}={}){
@@ -82,7 +82,7 @@ async function runBrowser(pdf,{signal}={}){
 window.__bcParse={resultFromJob};
 window.BarrierCheckAdapter={isConnected:false,
   async run(pdfFile,{signal}={}){
-    if(mode==='browser')return runBrowser(pdfFile,{signal});
+    if(mode==='browser'||mode==='proxy')return runBrowser(pdfFile,{signal});
     const res=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/pdf'},body:pdfFile,signal});const body=await res.json().catch(()=>null);
     if(!res.ok||!body)throw new Error(body?.error||`Backend response error (${res.status})`);return body.result;}};
 
@@ -108,6 +108,10 @@ window.addEventListener('DOMContentLoaded',async()=>{
     if(res.ok&&info.configured===true){mode='local';Object.assign(window.BarrierCheckAdapter,{isConnected:true,label:info.label,outputContract:info.output_contract});configure();
       document.getElementById('engineText').textContent='Studio target: '+info.label;document.getElementById('integrationHint').textContent='Live API configured for '+info.label+'. Each PDF runs as a separate Studio job.';return;}
   }catch(_){}
-  try{CFG=await (await fetch('workflow_config.json',{cache:'no-store'})).json();if(CFG.output_contract==='compact')connectUI();}catch(_){/* preview only */}
+  try{CFG=await (await fetch('workflow_config.json',{cache:'no-store'})).json();}catch(_){return;}
+  if(CFG.proxy_url){try{const r=await fetch(CFG.proxy_url.replace(/\/+$/,'')+'/status',{cache:'no-store'});const info=await r.json();
+    if(r.ok&&info.configured===true){mode='proxy';Object.assign(window.BarrierCheckAdapter,{isConnected:true,label:info.label||CFG.label,outputContract:'compact'});configure();
+      document.getElementById('integrationHint').textContent='Live API connected for '+(info.label||CFG.label)+'. Each PDF runs as a separate Studio job.';return;}}catch(_){/* fall back to key box */}}
+  if(CFG.output_contract==='compact')connectUI();
 });
 })();
