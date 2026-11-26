@@ -46,7 +46,7 @@ class TestCompact(unittest.TestCase):
   cfg=load_config();out=run_studio(b'%PDF-1.4 test',cfg,'fake-key',request=req,sleep=lambda _:None);self.assertEqual(out['decision_output'],D);self.assertEqual(out['followup_output'],F);self.assertEqual(json.loads(calls[1][2])['model'],cfg['workflow_id']);self.assertEqual(json.loads(calls[1][2])['config_id'],cfg['config_id'])
 class TestProject(unittest.TestCase):
  def test_config(self):
-  c=load_config();self.assertEqual(c['config_id'],'4');self.assertEqual(c['project_id'],'proj_YqEvTJxpcNamP9CrEXEFcU')
+  c=load_config();self.assertEqual(c['config_id'],'1');self.assertEqual(c['workflow_id'],'agt_hRY3sF6jaNwq8d7VTNEAHP');self.assertEqual(c['project_id'],'proj_YqEvTJxpcNamP9CrEXEFcU')
  def test_headers_all_requests(self):
   from unittest.mock import patch,MagicMock
   cfg=load_config(); replies=iter([{'id':'file_test'},{'id':'job_test','status':'in_progress'},job(step(NODE,json.dumps(D)),step(REPORT,json.dumps(F))),job(step(NODE,json.dumps(D)),step(REPORT,json.dumps(F)))])
@@ -58,7 +58,7 @@ class TestProject(unittest.TestCase):
   self.assertEqual(result['decision_output'],D);self.assertEqual(len(calls),4)
   for req in calls:
    headers={k.lower():v for k,v in req.header_items()};self.assertEqual(headers['x-project-id'],cfg['project_id']);self.assertEqual(headers['authorization'],'Bearer fake-key')
-  self.assertEqual(json.loads(calls[1].data)['config_id'],'4');self.assertIn('include=all',calls[-2].full_url);self.assertIn('include%5B%5D=all',calls[-1].full_url)
+  self.assertEqual(json.loads(calls[1].data)['config_id'],'1');self.assertIn('include=all',calls[-2].full_url);self.assertIn('include%5B%5D=all',calls[-1].full_url)
 class TestRuleSnapshot(unittest.TestCase):
  def test_named_rules(self):
   text='\n'.join([f'{c}=SATISFIED' for c in RULE_CODES]+['Q7_EVIDENCE=calibration date'])
@@ -83,11 +83,11 @@ class TestWrappedRules(unittest.TestCase):
   j=job(step(NODE,json.dumps(D)),step(REPORT,json.dumps(F)))
   alt=job(step('step_10_instruct',json.dumps({'content':self.text()})),*j['output'])
   calls=[]
-  def req(key,path): calls.append(path);return alt
+  def req(key,path,timeout=40): calls.append(path);return alt
   x=completed_result(j,'job_test',load_config(),'fake',req)
   self.assertEqual(x['rule_snapshot']['status']['Q7'],'VIOLATED');self.assertEqual(x['decision_output'],D);self.assertEqual(len(calls),1);self.assertIn('include%5B%5D=all',calls[0])
  def test_alternative_error_keeps_result(self):
-  def req(key,path): raise BridgeError('unsupported query')
+  def req(key,path,timeout=40): raise BridgeError('unsupported query')
   x=completed_result(job(step(NODE,json.dumps(D)),step(REPORT,json.dumps(F))),'job_test',load_config(),'fake',req)
   self.assertEqual(x['decision_output'],D);self.assertIsNone(x['rule_snapshot'])
 class TestCitationRegression(unittest.TestCase):
@@ -107,4 +107,45 @@ class TestCitationRegression(unittest.TestCase):
   for i in range(1,11):
    val=RULE_STATES[i%4];text='WORKFLOW_VERSION=v5.2\nA_DECISION=PASS\nB_DECISION=PASS\n'+'\n'.join(f'{c}={val}【†{i}】' for c in RULE_CODES)
    x=result_from_job(job(step('step_'+str(i)+'_instruct',text),step(NODE,json.dumps(D))),NODE,'compact',REPORT);self.assertEqual(x['rule_snapshot']['status'],dict.fromkeys(RULE_CODES,val))
+class TestV8Stability(unittest.TestCase):
+ def rules(self): return step(RULE_NODE,'\n'.join(c+'=SATISFIED' for c in RULE_CODES))
+ def base(self,*extra): return job(self.rules(),step(NODE,json.dumps(D)),*extra)
+ def test_all_9_aggregations_without_report(self):
+  for a in COMPACT_DECISIONS:
+   for b in COMPACT_DECISIONS:
+    d=dict(D,document_consistency=a,approval_compliance=b)
+    r=result_from_job(job(step(NODE,json.dumps(d))),NODE,'compact',REPORT)
+    self.assertEqual(r['overall_decision'],'FAIL' if 'FAIL' in (a,b) else '검토 필요' if '검토 필요' in (a,b) else 'PASS')
+    self.assertEqual(r['overall_source'],'07_fixed_aggregation');self.assertIsNone(r['followup_output']);self.assertEqual(r['decision_output'],d)
+ def test_fenced_report(self):
+  r=result_from_job(self.base(step(REPORT,'```json\n'+json.dumps(F,ensure_ascii=False)+'\n```【†1】')),NODE,'compact',REPORT)
+  self.assertEqual(r['followup_output'],F);self.assertEqual(r['overall_source'],'08_validated')
+ def test_report_citation_preserves_inside(self):
+  f=dict(F,document='evidence【†2】')
+  r=result_from_job(self.base(step(REPORT,json.dumps(f,ensure_ascii=False)+'【†1】')),NODE,'compact',REPORT)
+  self.assertEqual(r['followup_output'],f)
+ def test_identical_duplicate_report(self):
+  r=result_from_job(self.base(step(REPORT,json.dumps(F)),step(REPORT,json.dumps(F))),NODE,'compact',REPORT)
+  self.assertEqual(r['followup_output'],F)
+ def test_invalid_or_ambiguous_report(self):
+  for steps in [(step(REPORT,'broken'),),(step(REPORT,json.dumps(dict(F,recipient='wrong'))),),(step(REPORT,json.dumps(F)),step(REPORT,json.dumps(dict(F,document='different')))),(step(REPORT,json.dumps(dict(F,extra='invalid'))),)]:
+   r=result_from_job(self.base(*steps),NODE,'compact',REPORT);self.assertEqual(r['overall_decision'],'검토 필요');self.assertIsNone(r['followup_output']);self.assertTrue(r['followup_error'])
+ def test_retry_report_even_with_all_rules(self):
+  calls=[]
+  def req(key,path,timeout=40): calls.append((path,timeout));return self.base(step(REPORT,json.dumps(F)))
+  r=completed_result(self.base(),'job_report_missing',load_config(),'fake',req)
+  self.assertEqual(len(calls),1);self.assertEqual(calls[0][1],10);self.assertEqual(r['followup_output'],F);self.assertEqual(r['overall_source'],'08_validated')
+ def test_initial_job_recovers_report(self):
+  def req(*args,**kwargs): self.fail('No read needed')
+  r=completed_result(self.base(),'job_initial',load_config(),'fake',req,initial_job=self.base(step(REPORT,json.dumps(F))))
+  self.assertEqual(r['followup_output'],F)
+ def test_retry_twice_and_keep_valid_07(self):
+  calls=[]
+  def req(key,path,timeout=40): calls.append(path);raise BridgeError('unavailable')
+  r=completed_result(self.base(),'job_bounded',load_config(),'fake',req)
+  self.assertEqual(len(calls),2);self.assertEqual(r['decision_output'],D);self.assertEqual(r['overall_decision'],'검토 필요');self.assertIsNone(r['followup_output'])
+ def test_conflicting_07_retry_rejected(self):
+  def req(key,path,timeout=40): return job(self.rules(),step(NODE,json.dumps(dict(D,reason='different'))),step(REPORT,json.dumps(F)))
+  r=completed_result(self.base(),'job_conflict',load_config(),'fake',req)
+  self.assertIsNone(r['followup_output']);self.assertEqual(r['decision_output'],D)
 if __name__=='__main__': unittest.main()
