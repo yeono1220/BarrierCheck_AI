@@ -39,7 +39,7 @@ def find_output(job,node,keys=KEYS):
     matches=[]; named=[]
     for step in job.get('output',[]):
         if not isinstance(step,dict): continue
-        names=[step.get(k) for k in ('model','name','step_name')]
+        names=[step.get(k) for k in ('model','name','step_name','node_name')]
         is_named=node in names
         if is_named: named.append(True)
         for item in step.get('content',[]):
@@ -55,6 +55,48 @@ def find_output(job,node,keys=KEYS):
     if len(candidates)!=1:
         raise BridgeError(f'Cannot identify exactly one valid output for {node}. Check JSON syntax and API step names.')
     return candidates[0]
+
+
+def overall_from_decision(decision):
+    """Exact fixed 07 -> 08 aggregation; never an engineering re-evaluation."""
+    return next(v for v in ('FAIL','검토 필요','PASS') if v in
+                (decision['document_consistency'],decision['approval_compliance']))
+
+def unwrap_report(raw):
+    # 08 only: permit an outer JSON fence, BOM and trailing citation metadata.
+    # Never edit the JSON object, quoted values, action items or document.
+    for _ in range(6):
+        if isinstance(raw,dict):
+            if set(raw)==REPORT_KEYS: return raw
+            if 'content' in raw: raw=raw['content']; continue
+            if 'text' in raw: raw=raw['text']; continue
+            return None
+        if not isinstance(raw,str): return None
+        t=raw.strip().lstrip('\ufeff').strip()
+        t=re.sub(r'(?:\s*【[ \t]*†[ \t]*[0-9]+(?:[ \t]*[,，\-–][ \t]*[0-9]+)*[ \t]*】)+\s*$', '', t).strip()
+        fence=re.fullmatch(r'```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```',t,re.IGNORECASE)
+        if fence: raw=fence.group(1); continue
+        raw=strict_json(t)
+    return raw if isinstance(raw,dict) and set(raw)==REPORT_KEYS else None
+
+def find_report(job,node):
+    named=False; candidates=[]
+    for step in job.get('output',[]):
+        if not isinstance(step,dict): continue
+        hit=node in [step.get(k) for k in ('model','name','step_name','node_name')]
+        named=named or hit
+        for item in step.get('content',[]) or []:
+            if not isinstance(item,dict) or item.get('type')!='output_text': continue
+            try: value=unwrap_report(item.get('text'))
+            except (ValueError,TypeError,RecursionError): continue
+            if value is not None: candidates.append((hit,value))
+    unique=[]
+    for hit,value in candidates:
+        if named and not hit: continue
+        if value not in unique: unique.append(value)
+    if len(unique)!=1:
+        raise BridgeError(f'08 report unavailable: expected one unambiguous six-key JSON from {node}.')
+    return unique[0]
 
 RULE_CODES=tuple([f'R{i}' for i in range(1,8)]+[f'Q{i}' for i in range(1,9)])
 RULE_STATES=('SATISFIED','VIOLATED','UNVERIFIED','NOT_APPLICABLE')
@@ -153,17 +195,17 @@ def result_from_job(job,node,contract='full16',report_node='08_요약보고서')
         raise BridgeError('07 decision output violates the three-field contract.')
     report=None; warning=None
     try:
-        candidate=find_output(job,report_node,REPORT_KEYS)
+        candidate=find_report(job,report_node)
         if any(not isinstance(candidate[k],str) for k in REPORT_KEYS-{'action_items'}) or not isinstance(candidate['action_items'],list) or not all(isinstance(x,str) for x in candidate['action_items']):
             raise BridgeError('08 report has invalid field types.')
-        expected=next(v for v in ('FAIL','검토 필요','PASS') if v in (decision['document_consistency'],decision['approval_compliance']))
+        expected=overall_from_decision(decision)
         types={'FAIL':('부적합·재작업 요청서','정비·시험 담당'),'검토 필요':('보완 요청서','정비 패키지 제출자'),'PASS':('종결 검토 기록','설비 담당 승인자')}
         if candidate['overall_decision']!=expected or (candidate['followup_type'],candidate['recipient'])!=types[expected] or (expected=='PASS' and candidate['action_items']):
             raise BridgeError('08 report conflicts with 07 decision or the follow-up contract.')
         report=candidate
     except BridgeError as e: warning=str(e)
-    # Transport envelope only: preserve both original node objects, never fill missing results.
-    return {'decision_output':decision,'followup_output':report,'followup_error':warning,'rule_snapshot':rule_snapshot(job)}
+    # Preserve original node objects. Overall is the fixed aggregation of validated 07.
+    return {'decision_output':decision,'followup_output':report,'followup_error':warning,'overall_decision':overall_from_decision(decision),'overall_source':'08_validated' if report is not None else '07_fixed_aggregation','rule_snapshot':rule_snapshot(job)}
 
 def request_api(key,path,method='GET',payload=None,ctype=None,timeout=40,*,project_id):
     headers={'Authorization':'Bearer '+key,'Accept':'application/json','x-project-id':project_id}
@@ -247,18 +289,24 @@ def completed_result(job,job_id,config,key,request,initial_job=None):
             new=other['rule_snapshot']['status']
             if all(new.get(k)==v for k,v in old.items()): result['rule_snapshot']=other['rule_snapshot']
         if result.get('followup_output') is None and other.get('followup_output') is not None:
-            result['followup_output']=other['followup_output'];result['followup_error']=None
-    if coverage(result)<15: consider(initial_job)
+            result['followup_output']=other['followup_output'];result['followup_error']=None;result['overall_source']='08_validated'
+    def incomplete(): return coverage(result)<15 or result.get('followup_output') is None
+    if incomplete(): consider(initial_job)
     raw_attempts=[job]
-    if coverage(result)<15:
-        # Read-only retry of the SAME job, never create another job or upload again.
+    if isinstance(initial_job,dict) and initial_job.get('status')=='completed': raw_attempts.append(initial_job)
+    # At most two bounded read-only GETs for the SAME job. Never resubmit a PDF.
+    # A full rule snapshot does not imply that 08 has arrived.
+    for query in ({'include[]':'all'},{'include':'all'}):
+        if not incomplete(): break
+        # The second read is for a missing 08 only; preserve existing rule-only retry behavior.
+        if 'include' in query and result.get('followup_output') is not None: break
         try:
-            alternate=request(key,'/responses/'+quote(job_id,safe='')+'?'+urlencode({'include[]':'all'}))
+            alternate=request(key,'/responses/'+quote(job_id,safe='')+'?'+urlencode(query),timeout=10)
             raw_attempts.append(alternate);consider(alternate)
-        except (BridgeError,OSError,ValueError,TypeError) as e:
+        except (BridgeError,OSError,ValueError,TypeError,TimeoutError) as e:
             print('Alternative read-only output query unavailable:',type(e).__name__,flush=True)
     result['job_id']=job_id
-    if coverage(result)<15:
+    if incomplete():
         # Store only the actual candidate step outputs locally for troubleshooting.
         # No credentials, request headers, or input PDF are stored here.
         try:
@@ -272,10 +320,10 @@ def completed_result(job,job_id,config,key,request,initial_job=None):
                     names={k:step.get(k) for k in ('model','name','step_name','node_name') if isinstance(step.get(k),str)}
                     texts=list(rule_texts(step.get('content',[])))
                     candidates=[t for t in texts if parse_rule_text(t)[0] or RULE_NODE in names.values()]
-                    steps.append({'names':names,'rule_candidates':candidates})
+                    steps.append({'names':names,'rule_candidates':candidates, 'report_candidates':texts if report_node in names.values() else []})
                 records.append({'status':response.get('status'),'steps':steps})
-            (out/(safe_id+'_rules.json')).write_text(json.dumps({'job_id':job_id,'reported':coverage(result),'attempts':records},ensure_ascii=False,indent=2),encoding='utf-8')
-            print('Rule diagnostics saved:',safe_id+'_rules.json',flush=True)
+            (out/(safe_id+'_rules.json')).write_text(json.dumps({'job_id':job_id,'reported':coverage(result),'followup_error':result.get('followup_error'),'overall_source':result.get('overall_source'),'attempts':records},ensure_ascii=False,indent=2),encoding='utf-8')
+            print('Output diagnostics saved:',safe_id+'_rules.json',flush=True)
         except (OSError,ValueError,TypeError) as e: print('Could not save rule diagnostics:',type(e).__name__,flush=True)
     return result
 
@@ -295,6 +343,8 @@ def recover_job(job_id):
 
 def load_config():
     cfg=strict_json((ROOT/'workflow_config.json').read_text(encoding='utf-8'))
+    for name in ('workflow_id','config_id','project_id'):
+        if os.environ.get('UPSTAGE_'+name.upper()): cfg[name]=os.environ['UPSTAGE_'+name.upper()].strip()
     for name,prefix in [('workflow_id','agt_'),('project_id','proj_')]:
         if not isinstance(cfg.get(name),str) or not re.fullmatch(prefix+r'[A-Za-z0-9_-]+',cfg[name]): raise ValueError('Invalid '+name)
     if not isinstance(cfg.get('config_id'),str) or not re.fullmatch(r'(?:[1-9][0-9]*|cfg_[A-Za-z0-9_-]+)',cfg['config_id']): raise ValueError('Invalid config_id: use the saved version from Studio Code')
