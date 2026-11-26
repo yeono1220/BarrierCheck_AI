@@ -40,7 +40,8 @@ export default {
     } else if (request.method === 'POST' && path === '/files') {
       const len = Number(request.headers.get('Content-Length') || 0);
       if (len > MAX_BYTES) return json({ error: 'File too large' }, 413, h);
-      body = request.body;
+      body = await request.arrayBuffer(); // buffered: sends Content-Length instead of a chunked stream
+      if (body.byteLength > MAX_BYTES) return json({ error: 'File too large' }, 413, h);
     } else if (request.method === 'GET' && /^\/files\/[A-Za-z0-9_-]+$/.test(path)) {
       // status polling
     } else if (request.method === 'POST' && path === '/responses') {
