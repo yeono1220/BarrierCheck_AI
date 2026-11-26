@@ -1,5 +1,5 @@
 """Local demo bridge. Standard library only; no engineering decisions here."""
-import getpass, json, os, re, secrets, time, urllib.request, urllib.error, webbrowser, threading
+import getpass, json, os, re, secrets, time, urllib.request, urllib.error, webbrowser, threading, http.client, ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from functools import partial
@@ -14,6 +14,20 @@ COMPACT_DECISIONS=("PASS","FAIL","검토 필요")
 MAX_BYTES=30*1024*1024
 LIMIT=840
 class BridgeError(Exception): pass
+
+# Only explicit transient gateway/server errors and recoverable transport failures.
+# 429 is not retried: the provider may be reporting exhausted quota.
+TRANSIENT_HTTP = frozenset({408, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525})
+
+class ApiError(BridgeError):
+    def __init__(self, message, *, status=None, retryable=False):
+        super().__init__(message)
+        self.status=status
+        self.retryable=retryable
+
+def api_stage(path):
+    route=path.split('?',1)[0]
+    return {'/files':'1. File upload','/responses':'2. Job creation'}.get(route, 'File preparation' if route.startswith('/files/') else '3. Job polling' if route.startswith('/responses/') else 'API request')
 
 def strict_json(s):
     def reject(v): raise ValueError('Nonstandard JSON constant: '+v)
@@ -207,7 +221,7 @@ def result_from_job(job,node,contract='full16',report_node='08_요약보고서')
     # Preserve original node objects. Overall is the fixed aggregation of validated 07.
     return {'decision_output':decision,'followup_output':report,'followup_error':warning,'overall_decision':overall_from_decision(decision),'overall_source':'08_validated' if report is not None else '07_fixed_aggregation','rule_snapshot':rule_snapshot(job)}
 
-def request_api(key,path,method='GET',payload=None,ctype=None,timeout=40,*,project_id):
+def _request_api_once(key,path,method='GET',payload=None,ctype=None,timeout=40,*,project_id):
     headers={'Authorization':'Bearer '+key,'Accept':'application/json','x-project-id':project_id}
     if ctype: headers['Content-Type']=ctype
     req=urllib.request.Request(API+path,data=payload,headers=headers,method=method)
@@ -216,8 +230,7 @@ def request_api(key,path,method='GET',payload=None,ctype=None,timeout=40,*,proje
             return strict_json(resp.read().decode('utf-8'))
     except urllib.error.HTTPError as e:
         # Display limited, redacted provider diagnostics in the local console only.
-        route=path.split('?',1)[0]
-        stage={'/files':'1. File upload','/responses':'2. Job creation'}.get(route, 'File preparation' if route.startswith('/files/') else '3. Job polling' if route.startswith('/responses/') else 'API request')
+        stage=api_stage(path)
         msg={401:'Authentication rejected',403:'Request forbidden by Upstage',404:'Requested resource not found',429:'API quota or rate limit reached'}.get(e.code,'Upstage API request failed')
         detail=f'{stage}: {msg} (HTTP {e.code}). Check organization, project access, usage and Studio monitoring.'
         print(detail,flush=True)
@@ -236,8 +249,41 @@ def request_api(key,path,method='GET',payload=None,ctype=None,timeout=40,*,proje
         except Exception: print('Upstage error detail: (unavailable or non-JSON)',flush=True)
         rid=e.headers.get('x-request-id') if e.headers else None
         if rid: print('Upstage request ID:',str(rid)[:200].replace(key,'[REDACTED]') if key else str(rid)[:200],flush=True)
-        raise BridgeError(detail+' See the local terminal for provider error details.') from None
-    except (OSError,ValueError) as e: raise BridgeError('Upstage connection or response error: '+type(e).__name__) from None
+        raise ApiError(detail+' See the local terminal for provider error details.', status=e.code, retryable=e.code in TRANSIENT_HTTP) from None
+    except (OSError,http.client.HTTPException,ValueError) as e:
+        reason=e.reason if isinstance(e,urllib.error.URLError) else e
+        # Certificate validation failures are configuration/security errors. Never bypass TLS.
+        retryable=not isinstance(reason,ssl.SSLError) and (not isinstance(e,ValueError) or method=='GET')
+        raise ApiError(api_stage(path)+': Upstage connection or response error ('+type(reason).__name__+').',retryable=retryable) from None
+
+def request_api(key,path,method='GET',payload=None,ctype=None,timeout=40,*,project_id,sleep=time.sleep,clock=time.monotonic):
+    """Bounded retries for upload and read-only requests, never job creation."""
+    route=path.split('?',1)[0]
+    upload=method=='POST' and route=='/files'
+    read=method=='GET' and (route.startswith('/files/') or route.startswith('/responses/'))
+    create=method=='POST' and route=='/responses'
+    attempts=4 if upload else 3 if read else 1
+    # Upload can have 3 retries. GETs share their original total time budget.
+    budget=timeout*attempts+7 if upload else timeout
+    deadline=clock()+budget
+    for i in range(attempts):
+        remaining=deadline-clock()
+        if remaining<=0: raise BridgeError(api_stage(path)+': Retry time budget exhausted.')
+        per_attempt=min(timeout,remaining)
+        if read and i<attempts-1:
+            per_attempt=min(per_attempt,max(0.1,(remaining-(2**i))/(attempts-i)))
+        try:
+            return _request_api_once(key,path,method,payload,ctype,per_attempt,project_id=project_id)
+        except ApiError as e:
+            # A lost create response can hide an already-created billable job.
+            if create and (e.retryable or e.status is None):
+                raise BridgeError(str(e)+' Job creation outcome may be unknown. No automatic resubmission. Check Studio monitoring before retrying.') from None
+            if not e.retryable or attempts==1: raise
+            delay=2**i
+            if i+1>=attempts or deadline-clock()<=delay+0.1:
+                raise BridgeError(str(e)+f' Automatic retry limit reached ({i+1} attempts).'+(' No workflow job was submitted by this upload attempt.' if upload else ' Check the existing job in Studio monitoring.')) from None
+            print(f'{api_stage(path)}: transient failure ({e.status or "connection"}); retry {i+1}/{attempts-1} in {delay}s.',flush=True)
+            sleep(delay)
 
 def run_studio(pdf,config,key,request=None,sleep=time.sleep,clock=time.monotonic):
     if request is None: request=partial(request_api,project_id=config['project_id'])
@@ -257,16 +303,21 @@ def run_studio(pdf,config,key,request=None,sleep=time.sleep,clock=time.monotonic
         if state!='PROCESSING': raise BridgeError('File preparation did not return a ready status: '+(state or 'missing'))
         sleep(min(2,max(0,remaining)))
     body={'model':config['workflow_id'],'config_id':config['config_id'],'include':['all'],'input':[{'role':'user','content':[{'type':'input_file','file_id':file_id}]}]}
-    job=request(key,'/responses','POST',json.dumps(body).encode(),'application/json')
+    remaining=LIMIT-(clock()-start)
+    if remaining<=0: raise BridgeError('File preparation timed out before job creation.')
+    job=request(key,'/responses','POST',json.dumps(body).encode(),'application/json',timeout=min(40,max(1,remaining)))
     created=job
     job_id=job.get('id')
-    if not isinstance(job_id,str) or not job_id: raise BridgeError('Studio did not return a job ID.')
+    if not isinstance(job_id,str) or not job_id: raise BridgeError('Studio did not return a job ID. Job creation outcome may be unknown. Check Studio monitoring before retrying.')
     print('Studio job:',job_id,flush=True)
     # Always retrieve full step outputs, even if create immediately reports completed.
     while True:
         remaining=LIMIT-(clock()-start)
-        if remaining<=0: raise BridgeError('Local polling timeout. Studio may still be running; check its monitoring page before retrying.')
-        job=request(key,'/responses/'+quote(job_id,safe='')+'?'+urlencode({'include':'all'}),timeout=min(40,max(1,remaining)))
+        if remaining<=0: raise BridgeError(f'Local polling timeout. Existing job: {job_id}. Studio may still be running; check its monitoring page before retrying.')
+        try:
+            job=request(key,'/responses/'+quote(job_id,safe='')+'?'+urlencode({'include':'all'}),timeout=min(40,max(0.1,remaining)))
+        except BridgeError as e:
+            raise BridgeError(f'{e} Existing job: {job_id}. Do not resubmit before checking Studio monitoring.') from None
         state=job.get('status')
         if state=='completed': return completed_result(job,job_id,config,key,request,initial_job=created)
         if state not in ('queued','in_progress','cancelling'): raise BridgeError(f'Studio job ended without a result ({state}). See Studio monitoring.')

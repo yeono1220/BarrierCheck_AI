@@ -33,12 +33,12 @@ PDF 1개(정비 건 1건)를 넣으면 Upstage Studio 워크플로가 다음을 
 | `adapter.js` | 같은 출처의 로컬 서버(`/api/review`)만 호출. 브라우저에 API 키 없음 |
 | `server.py` | 로컬 브리지 서버 (127.0.0.1:8765). PDF를 Studio API로 보내고 07·08 노드 출력과 05 규칙 상태를 돌려줌 |
 | `workflow_config.json` | 호출할 Studio 워크플로·설정 번호, 판정 노드(07)·보고서 노드(08) 이름 |
-| `test_bridge.py`, `test_frontend.js` | 합성 데이터 테스트 (`python -m unittest test_bridge`, `node test_frontend.js`) |
+| `test_bridge.py`, `test_retry.py`, `test_frontend.js` | 합성 데이터 테스트 (`python -m unittest test_bridge test_retry`, `node test_frontend.js`) |
 | `START_WINDOWS.bat` | Windows 실행 스크립트 |
 
 ## 버전
 
-현재 main = **Ready v8**: 07 A/B는 그대로 표시, Overall은 07 기준 FAIL > 검토 필요 > PASS로 항상 집계(08 없어도 표시), 08 누락 시 같은 작업을 최대 2번 다시 읽기(재제출 없음), 후속 조치 보고서 미리보기·PDF. 대상 워크플로: `람코냥이_최종제출_workflow` config 1 (`workflow_config.json`). 실행 전 Studio Code 화면의 workflow_id/config_id/project_id를 확인하세요. 변경 내역은 `docs/CHANGELOG_local.txt`.
+현재 main = **Ready v9** (v8 + 전송 안정화: 업로드 HTTP 525 등 일시 오류 최대 3회 재시도, 상태·결과 조회 2회 재시도, 작업 생성은 중복 방지를 위해 재시도 안 함). v8 내용: 07 A/B는 그대로 표시, Overall은 07 기준 FAIL > 검토 필요 > PASS로 항상 집계(08 없어도 표시), 08 누락 시 같은 작업을 최대 2번 다시 읽기(재제출 없음), 후속 조치 보고서 미리보기·PDF. 대상 워크플로: `람코냥이_최종제출_workflow` config 1 (`workflow_config.json`). 실행 전 Studio Code 화면의 workflow_id/config_id/project_id를 확인하세요. 변경 내역은 `docs/CHANGELOG_local.txt`.
 
 ## 실행 / Run locally
 
