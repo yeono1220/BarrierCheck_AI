@@ -42,3 +42,10 @@
 .rp-sign{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:30px}.rp-sign div{display:flex;flex-direction:column;gap:30px}.rp-sign span{font-size:11px;color:var(--muted);font-weight:650}.rp-sign i{display:block;border-bottom:1px solid #9fb1b8}
 .rp-foot{margin:26px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:10.5px;color:var(--muted);line-height:1.55}
 @media print{body.printing-report .app{display:none!important}body.printing-report .reportdialog{position:static;width:auto;height:auto;box-shadow:none;background:#fff;border-radius:0}body.printing-report .rd-bar{display:none}body.printing-report .rd-body{padding:0;overflow:visible}body.printing-report .rd-paper{box-shadow:none;max-width:none;border-top:0}body.printing-report .reportdialog::backdrop{background:none}}
+
+/* gh-pages: browser API key box */
+.byok{display:flex;flex-direction:column;gap:7px;margin:0 0 14px;padding:12px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(255,255,255,.04)}
+.byok-title{font-size:11px;font-weight:700;letter-spacing:.06em;color:#cfe3e0;text-transform:uppercase}
+.byok input{width:100%;box-sizing:border-box;padding:8px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.18);color:#fff;font-size:12px}
+.byok input:disabled{opacity:.5}
+.byok-note{font-size:10.5px;line-height:1.45;color:#9fb6bb}

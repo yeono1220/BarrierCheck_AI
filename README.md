@@ -66,7 +66,11 @@ python server.py
 
 ## GitHub Pages (보기 전용 데모)
 
-`gh-pages` 브랜치는 서버 없이 프론트엔드만 띄웁니다. API 호출이 없으므로 `Run verification`은 잠기고(미리보기 모드), 다음 두 가지로 화면을 볼 수 있습니다.
+`gh-pages` 브랜치는 서버 없이 프론트엔드만 띄웁니다.
+
+**실시간 실행(브라우저 모드):** 왼쪽 아래 *Live API (browser)* 칸에 이 워크플로 프로젝트에 권한이 있는 Upstage API 키를 넣고 Connect → PDF 업로드 → Run verification. 브라우저가 api.upstage.ai를 직접 호출합니다. 키는 이 탭 메모리에만 있고 저장·전송(업스테이지 외)되지 않으며, 새로고침하면 사라집니다. 권한 없는 키는 거절됩니다. 실행마다 그 키의 크레딧이 쓰입니다.
+
+키 없이 보기만 할 때는 다음 두 가지로 화면을 볼 수 있습니다.
 
 1. 첫 화면 아래 **Explore example results** 카드(예시 데이터)
 2. **Import result JSON** → `samples/` 폴더의 실제 Studio 실행 결과(set01 FAIL, set02 검토 필요, set03 PASS)를 내려받아 불러오기 → 결과 화면 → Next action → `View full draft →`로 후속 조치 보고서 미리보기·PDF 저장
